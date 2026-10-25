@@ -6,28 +6,25 @@ st.set_page_config(page_title="المحاسب الذكي - الجزائر", page
 st.title("🛒 المحاسب الذكي - نظام تسيير المحلات")
 st.write("مرحباً بك في تطبيقك المحاسبي الاحترافي المخصص لأصحاب المتاجر.")
 
-# تهيئة الذاكرة المؤقتة للسلع وسجل المبيعات داخل الجلسة
+# تهيئة المخزون ليكون فارغاً في البداية ليدخله صاحب المحل بنفسه
 if 'inventory' not in st.session_state:
-    st.session_state.inventory = [
-        {"name": "سكر (2 كغ)", "cost": 220, "price": 250, "qty": 20, "min_limit": 5},
-        {"name": "زيت ممتازة (1 لتر)", "cost": 550, "price": 600, "qty": 10, "min_limit": 3}
-    ]
+    st.session_state.inventory = []
 
 if 'sales_history' not in st.session_state:
     st.session_state.sales_history = []
 
-# --- القائمة الجانبية لإضافة سلعة جديدة ---
-st.sidebar.header("➕ إضافة سلعة للمخزن")
+# --- القائمة الجانبية: إضافة سلعة جديدة من طرف صاحب المحل ---
+st.sidebar.header("➕ إضافة سلعة جديدة للمخزن")
 with st.sidebar.form("add_form"):
     new_name = st.text_input("اسم السلعة والنوع")
-    new_cost = st.number_input("سعر الشراء (دج)", min_value=0.0, value=100.0)
-    new_price = st.number_input("سعر البيع (دج)", min_value=0.0, value=120.0)
-    new_qty = st.number_input("الكمية الأولية", min_value=0, value=10)
+    new_cost = st.number_input("سعر الشراء للوحدة (دج)", min_value=0.0, value=100.0)
+    new_price = st.number_input("سعر البيع للوحدة (دج)", min_value=0.0, value=120.0)
+    new_qty = st.number_input("الكمية المتوفرة", min_value=0, value=10)
     new_min = st.number_input("حد التنبيه بالنفاد", min_value=0, value=3)
     
-    submitted = st.form_submit_button("حفظ السلعة")
+    submitted = st.form_submit_button("حفظ السلعة في المخزن")
     if submitted and new_name:
-        # التحقق إن كانت موجودة مسبقاً
+        # التحقق إن كانت السلعة موجودة مسبقاً
         exists = any(item['name'] == new_name for item in st.session_state.inventory)
         if not exists:
             st.session_state.inventory.append({
@@ -36,12 +33,12 @@ with st.sidebar.form("add_form"):
             st.sidebar.success(f"تمت إضافة '{new_name}' بنجاح!")
             st.rerun()
         else:
-            st.sidebar.error("السلعة مسجلة مسبقاً!")
+            st.sidebar.error("هذه السلعة مسجلة مسبقاً!")
 
-# --- الواجهة الرئيسية: عرض المخزون والحالة ---
+# --- الواجهة الرئيسية: عرض المخزون الحالي ---
 st.header("📦 حالة المخزون الحالي في المحل")
 if not st.session_state.inventory:
-    st.info("المخزون فارغ حالياً.")
+    st.info("المخزون فارغ حالياً. قم بإضافة السلع والمنتجات الخاصة بك من القائمة الجانبية ⬅️.")
 else:
     for item in st.session_state.inventory:
         col1, col2, col3, col4 = st.columns(4)
@@ -62,7 +59,7 @@ if st.session_state.inventory:
     selected_item = st.selectbox("اختر السلعة المباعة", item_choices)
     sold_amount = st.number_input("الكمية المباعة", min_value=1, value=1)
     
-    if st.button("إتمام البيع وسجل الأرباح"):
+    if st.button("إتمام البيع وحساب الأرباح"):
         for item in st.session_state.inventory:
             if item['name'] == selected_item:
                 if item['qty'] >= sold_amount:
@@ -77,8 +74,10 @@ if st.session_state.inventory:
                     st.rerun()
                 else:
                     st.error(f"خطأ: الكمية المتوفرة في المخزن هي {item['qty']} فقط!")
+else:
+    st.warning("الرجاء إضافة سلع للمخزن أولاً لكي تتمكن من تسجيل المبيعات.")
 
-# --- قسم التقرير المالي الختامي ---
+# --- قسم التقرير المالي والذكاء الاصطناعي الاستباقي ---
 st.divider()
 st.header("📊 التقرير المالي والذكاء الاصطناعي الاستباقي")
 if st.session_state.sales_history:
@@ -92,6 +91,6 @@ if st.session_state.sales_history:
     st.subheader("🤖 تحليل وتوصيات الذكاء الاصطناعي:")
     for item in st.session_state.inventory:
         if item['qty'] <= item['min_limit']:
-            st.warning(- f"تنبيه ذكي لـ '{item['name']}': المخزون وصل إلى {item['qty']} وحدات. يُنصح بإعادة الطلب من المورد فوراً لتفادي ضياع الزبائن.")
+            st.warning(f"تنبيه ذكي لـ '{item['name']}': المخزون وصل إلى {item['qty']} وحدات. يُنصح بإعادة الطلب من المورد فوراً لتفادي ضياع الزبائن.")
 else:
     st.info("لا توجد مبيعات مسجلة حتى الآن لعرض التقارير والأرباح.")
