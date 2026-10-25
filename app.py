@@ -3,15 +3,14 @@ import streamlit as st
 
 # إعدادات الصفحة
 st.set_page_config(
-    page_title="المحاسب الذكي - النسخة التجارية الكاملة",
+    page_title="المحاسب الذكي - سلة مشتريات الزبون",
     page_icon="🛒",
     layout="centered",
 )
 
-st.title("🛒 المحاسب الذكي - النظام التجاري المتكامل")
+st.title("🛒 المحاسب الذكي - نظام السلة والفاتورة الإجمالية")
 st.write(
-    "إدارة المخزون، البحث السريع، المبيعات النقدية، دفتر الديون، وقاعدة البيانات"
-    " الدائمة."
+    "إدارة المخزون، سلة مشتريات الزبون متعددة السلع، الوصل النهائي، ودفتر الديون."
 )
 
 
@@ -20,7 +19,6 @@ def init_db():
   conn = sqlite3.connect("smart_shop.db", check_same_thread=False)
   cursor = conn.cursor()
 
-  # جدول السلع والمخزون
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,7 +30,6 @@ def init_db():
         )
     """)
 
-  # جدول المبيعات
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +41,6 @@ def init_db():
         )
     """)
 
-  # جدول الديون (الكريدي)
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS debts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +54,10 @@ def init_db():
 
 
 conn, cursor = init_db()
+
+# تهيئة سلة المشتريات المؤقتة للزبون الحالي داخل الجلسة
+if "cart" not in st.session_state:
+  st.session_state.cart = []
 
 # --- 2. القائمة الجانبية: إضافة السلع للمخزن ---
 st.sidebar.header("➕ إضافة سلعة جديدة للمخزن")
@@ -84,22 +84,18 @@ with st.sidebar.form("add_form", clear_on_submit=True):
     except sqlite3.IntegrityError:
       st.sidebar.error("هذه السلعة مسجلة مسبقاً في قاعدة البيانات!")
 
-# --- 3. الواجهة الرئيسية: البحث السريع وعرض المخزون ---
+# --- 3. الواجهة الرئيسية: عرض المخزون والبحث السريع ---
 st.header("📦 إدارة المخزون والبحث السريع")
 
-# جلب كل السلع من قاعدة البيانات
 cursor.execute("SELECT name, cost, price, qty, min_limit FROM inventory")
 all_items = cursor.fetchall()
 
 if not all_items:
   st.info("المخزون فارغ حالياً. قم بإضافة سلعك من القائمة الجانبية ⬅️.")
 else:
-  # شريط البحث السريع عن السلع
   search_query = st.text_input(
       "🔍 ابحث عن سلعة بسرعة (اكتب اسم المنتج)...", ""
   )
-
-  # تصفية السلع حسب البحث
   filtered_items = [
       item for item in all_items if search_query.lower() in item[0].lower()
   ]
@@ -119,60 +115,116 @@ else:
       else:
         col4.success("✅ متوفر")
 
-# --- 4. تسجيل المبيعات النقدية وإصدار وصل (Facture) ---
+# --- 4. بناء سلة المشتريات للزبون (إضافة عدة سلع قبل الدفع) ---
 st.divider()
-st.header("💰 تسجيل عملية بيع وإصدار وصل (Facture)")
+st.header("🛒 بناء سلة مشتريات الزبون (إضافة عدة سلع)")
 
 if all_items:
-  item_choices = [item[0] for item in all_items]
-  selected_item = st.selectbox("اختر السلعة المباعة", item_choices)
-  sold_amount = st.number_input(
-      "الكمية المباعة", min_value=1, value=1, key="sold_qty"
-  )
-
-  if st.button("إتمام البيع وإصدار الوصل"):
-    # جلب معلومات السلعة المحددة
-    cursor.execute(
-        "SELECT price, cost, qty FROM inventory WHERE name = ?", (selected_item,)
+  with st.form("cart_form", clear_on_submit=True):
+    item_choices = [item[0] for item in all_items]
+    chosen_item = st.selectbox("اختر السلعة لإضافتها للسلة", item_choices)
+    chosen_qty = st.number_input(
+        "الكمية المطلوبة لهذه السلعة", min_value=1, value=1
     )
-    res = cursor.fetchone()
-    if res:
-      price, cost, current_qty = res
-      if current_qty >= sold_amount:
-        new_qty = current_qty - sold_amount
-        revenue = sold_amount * price
-        profit = sold_amount * (price - cost)
+    add_to_cart_btn = st.form_submit_button("➕ أضف إلى سلة الزبون")
 
-        # تحديث المخزون في قاعدة البيانات
+    if add_to_cart_btn:
+      # التحقق من المخزون المتوفر
+      cursor.execute(
+          "SELECT price, cost, qty FROM inventory WHERE name = ?", (chosen_item,)
+      )
+      res = cursor.fetchone()
+      if res:
+        price, cost, current_qty = res
+        # التأكد أن الكمية الإجمالية في السلة لا تتجاوز المخزون
+        existing_in_cart = sum(
+            item["qty"]
+            for item in st.session_state.cart
+            if item["name"] == chosen_item
+        )
+        if current_qty >= (existing_in_cart + chosen_qty):
+          st.session_state.cart.append({
+              "name": chosen_item,
+              "qty": chosen_qty,
+              "price": price,
+              "cost": cost,
+              "total": chosen_qty * price,
+              "profit": chosen_qty * (price - cost),
+          })
+          st.success(
+              f"تمت إضافة {chosen_qty} من '{chosen_item}' إلى سلة الزبون بنجاح!"
+          )
+          st.rerun()
+        else:
+          st.error(
+              f"خطأ: الكمية غير كافية في المخزن! المتوفر فقط {current_qty}"
+          )
+
+  # عرض محتوى سلة المشتريات الحالية للزبون
+  if st.session_state.cart:
+    st.subheader("📋 محتويات سلة مشتريات الزبون الحالي:")
+    cart_total_amount = 0
+
+    for i, cart_item in enumerate(st.session_state.cart):
+      col_c1, col_c2, col_c3, col_c4 = st.columns([2, 1, 1, 1])
+      col_c1.write(f"**{cart_item['name']}**")
+      col_c2.write(f"الكمية: {cart_item['qty']}")
+      col_c3.write(f"المبلغ: {cart_item['total']} دج")
+
+      # زر لحذف سلعة معينة من السلة إذا أخطأ التاجر
+      if col_c4.button("❌ حذف", key=f"del_cart_{i}"):
+        st.session_state.cart.pop(i)
+        st.rerun()
+
+      cart_total_amount += cart_item["total"]
+
+    st.markdown(f"### 💵 الإجمالي الواجب دفعه: **{cart_total_amount} دج**")
+
+    # زر تأكيد الدفع النهائي لكل السلة وإصدار الوصل وخصم المخزون
+    if st.button("✅ تأكيد البيع وإصدار الوصل النهائي (Facture)"):
+      receipt_details = []
+      for cart_item in st.session_state.cart:
+        # خصم المخزون في قاعدة البيانات
         cursor.execute(
-            "UPDATE inventory SET qty = ? WHERE name = ?",
-            (new_qty, selected_item),
+            "UPDATE inventory SET qty = qty - ? WHERE name = ?",
+            (cart_item["qty"], cart_item["name"]),
         )
         # تسجيل المبيعات
         cursor.execute(
             "INSERT INTO sales (item_name, sold, revenue, profit) VALUES (?, ?,"
             " ?, ?)",
-            (selected_item, sold_amount, revenue, profit),
+            (
+                cart_item["name"],
+                cart_item["qty"],
+                cart_item["total"],
+                cart_item["profit"],
+            ),
         )
-        conn.commit()
+        receipt_details.append(
+            f"- {cart_item['name']} (الكمية: {cart_item['qty']}) — السعر:"
+            f" {cart_item['total']} دج"
+        )
 
-        st.success("✅ تمت عملية البيع بنجاح!")
+      conn.commit()
 
-        # عرض وصل البيع (Receipt / Facture) الفوري
-        st.markdown("---")
-        st.markdown("### 🧾 وصل البيع (Facture)")
-        st.markdown(f"**السلعة:** {selected_item}")
-        st.markdown(f"**الكمية:** {sold_amount}")
-        st.markdown(f"**السعر الإجمالي للدفع:** **{revenue} دج**")
-        st.markdown(f"*(صافي الربح لهذه العملية: {profit} دج)*")
-        st.markdown("---")
-        st.rerun()
-      else:
-        st.error(f"خطأ: الكمية المتوفرة في المخزن هي {current_qty} فقط!")
+      st.success("🎉 تمت عملية البيع بنجاح وتحديث المخزن!")
+
+      # طباعة وصل البيع النهائي (Facture)
+      st.markdown("---")
+      st.markdown("### 🧾 وصل البيع النهائي (Facture)")
+      for line in receipt_details:
+        st.markdown(line)
+      st.markdown(f"**المبلغ الإجمالي الإجمالي للزبون: {cart_total_amount} دج**")
+      st.markdown("---")
+
+      # تفريغ السلة بعد إتمام البيع للبدء مع زبون جديد
+      st.session_state.cart = []
+  else:
+    st.info("السلة فارغة حالياً. أضف سلعاً للزبون.")
 else:
-  st.warning("أضف سلعاً للمخزن لتتمكن من البيع.")
+  st.warning("أضف سلعاً للمخزن أولاً.")
 
-# --- 5. نظام دفتر الديون والكريدي الدائم ---
+# --- 5. دفتر الديون والكريدي الدائم ---
 st.divider()
 st.header("📝 دفتر ديون الزبائن (الكريدي الدائم)")
 
@@ -194,7 +246,6 @@ with st.form("debt_form", clear_on_submit=True):
     )
     st.rerun()
 
-# عرض قائمة الديون من قاعدة البيانات
 cursor.execute("SELECT id, customer, amount, note FROM debts")
 all_debts = cursor.fetchall()
 
@@ -206,7 +257,6 @@ if all_debts:
     col_list1.write(f"👤 **{customer}** - المبلغ: **{amount} دج**")
     col_list2.write(f"📝 {note}")
 
-    # زر تسديد الدين لحذفه نهائياً من قاعدة البيانات
     if col_list3.button("تسديد الدين", key=f"pay_{debt_id}"):
       cursor.execute("DELETE FROM debts WHERE id = ?", (debt_id,))
       conn.commit()
